@@ -1,3 +1,7 @@
+*.so
+elf
+elf_reader
+.*
 # Object files
 *.o
 *.ko
