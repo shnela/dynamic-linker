@@ -38,11 +38,9 @@ struct library *library_load(const char *name, void *(*getsym)(const char *name)
   lib->lib = shared_lib;
   lib->dynsym = *dynsym;
 
-  /*
      int numsym = get_symbols(shared_lib, getsym);
      if (numsym < 0)
      return NULL;
-   */
 
   return lib;
 }

@@ -29,6 +29,7 @@ int main()
   printf ("tutaj: %d\n", (int)malloc);
   */
   int a = ptr();
+  printf(":) a to %d\n", a);
 
   int *ccc = library_getsym(lib, "c");
   printf("c: %d!\n", *ccc);
