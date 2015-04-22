@@ -24,10 +24,7 @@ int main()
 
   int (*ptr)();
   ptr = library_getsym(lib, "fun");
-  /*
-  printf ("tutaj: %d\n", (int)f("dupa"));
-  printf ("tutaj: %d\n", (int)malloc);
-  */
+  printf ("addr of fun 0x%x\n", ptr);
   int a = ptr();
   printf(":) a to %d\n", a);
 

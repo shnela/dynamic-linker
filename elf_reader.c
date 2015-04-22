@@ -47,47 +47,18 @@ void relocate(Elf32_Shdr* shdr, const Elf32_Sym* syms, const char* strings, cons
   }
 }
 
-void* find_sym(const char* name, Elf32_Shdr* shdr, const char* strings, const char* src, char* dst)
+void* get_dyn_segment(char *elf)
 {
-  printf ("find sym::\n");
-  printf ("dst %d\n", (int)dst);
-  Elf32_Sym* syms = (Elf32_Sym*)(src + shdr->sh_offset);
-  int i;
-  for(i = 0; i < shdr->sh_size / sizeof(Elf32_Sym); i += 1) {
-    if (strcmp(name, strings + syms[i].st_name) == 0) {
-      printf ("%s\n", name);
-      char tmp[10];
-      strncpy(tmp, strings + syms[i].st_name, 9);
-      tmp[9] = 0;
-      printf("name: %s under (%d)\n", tmp, syms[i].st_value);
-      return dst + syms[i].st_value;
-    }
-  }
-  return NULL;
-}
-
-int allocate(char *elf, Elf32_Shdr **dynsym)
-{
-
-  printf("alloca\n");
   Elf32_Ehdr *hdr = (Elf32_Ehdr*) elf;
   Elf32_Phdr *phdr = (Elf32_Phdr *)(elf + hdr->e_phoff);
 
-  Elf32_Phdr *tmp;
-
   int i;
   for(i=0; i < hdr->e_phnum; ++i) {
-    printf ("%dth segment: %d\n", i, phdr[i].p_type);
-
-    if(phdr[i].p_type == PT_LOAD) {
-    }
     if(phdr[i].p_type == PT_DYNAMIC) {
-      tmp = phdr + i;
-      printf("here\n");
+      return elf + phdr[i].p_vaddr;
     }
   }
-
-  return 42;
+  return (void*)NULL;
 }
 
 #define ElfW(type) Elf32_ ## type
@@ -107,7 +78,12 @@ static int ElfFlagsToMmapFlags(int pflags) {
          ((pflags & PF_W) != 0 ? PROT_WRITE : 0);
 }
 
-uintptr_t NaClLoadElfFile(int fd) {
+size_t map_elf(const char* name, void **mapped_load) {
+  FILE* elf = fopen(name, "rb");
+  int fd = fileno(elf);
+
+  size_t span;
+
   /* Read ELF file headers. */
   Elf32_Ehdr ehdr;
   ssize_t bytes_read = pread(fd, &ehdr, sizeof(ehdr), 0);
@@ -118,6 +94,8 @@ uintptr_t NaClLoadElfFile(int fd) {
   /* TODO check it ! */
   //  CheckElfHeaders(&ehdr);
   /* Read ELF program headers. */
+  if (!is_image_valid(&ehdr))
+    return -1;
   if (ehdr.e_phnum > MAX_PHNUM) {
     return -1;
     //    NaClLog(LOG_FATAL, "ELF file has too many program headers\n");
@@ -148,7 +126,7 @@ uintptr_t NaClLoadElfFile(int fd) {
     return -1;
 //    NaClLog(LOG_FATAL, "First PT_LOAD segment's load address is not 0\n");
   }
-  size_t span = last_load->p_vaddr + last_load->p_memsz;
+  span = last_load->p_vaddr + last_load->p_memsz;
   /* Reserve address space. */
   void *mapping = mmap(NULL, span, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   if (mapping == MAP_FAILED) {
@@ -191,7 +169,8 @@ uintptr_t NaClLoadElfFile(int fd) {
 //    NaClLog(LOG_FATAL, "close() failed\n");
   }
 
-  return load_bias;
+  *mapped_load = (void*)load_bias;
+  return span;
 }
 
 
@@ -215,9 +194,11 @@ int get_symbols(char *elf, void *(*getsym)(const char *name))
 
   for(i=0; i < hdr->e_shnum; ++i) {
     if (shdr[i].sh_type == SHT_RELA) {
-      printf("ERROR!!!!!!!!!!!!!!!!!!!!!!!!!!!11\n");
+      printf("JEA!!!!!!!!!!!!!!!!!!!!!!!!!!!11\n");
+      relocate(shdr + i, syms, strings, elf, elf, getsym);
     }
     if (shdr[i].sh_type == SHT_REL) {
+      printf("normal!!!!!!!!!!!!!!!!!!!!!!!!11\n");
       relocate(shdr + i, syms, strings, elf, elf, getsym);
     }
   }

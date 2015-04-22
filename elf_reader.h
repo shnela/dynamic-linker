@@ -1,10 +1,8 @@
 /* zso1 jk320790 */
 #include <elf.h>
 
-/* allocates library in memeory with all premisiosns */
-int allocate(char* hdr, Elf32_Shdr **dynsym);
+/* maps elf LOAD segments file and sets pointer to them, returns mapped bytes or -1*/
+size_t map_elf(const char* name, void **mapped_load);
 
-/* gets symbols from elf and returns number of pairs sym:addr allocated in symbols */
-int get_symbols(char *elf, void *(*getsym)(const char *name));
-
-void* find_sym(const char* name, Elf32_Shdr* shdr, const char* strings, const char* src, char* dst);
+/* returns pointer to dynamic segment of mapped elf file */
+void* get_dyn_segment(char *elf);
