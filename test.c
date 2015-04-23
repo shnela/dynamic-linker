@@ -23,12 +23,11 @@ int main()
   printf ("start\n");
 
   int (*ptr)();
-  ptr = library_getsym(lib, "fun");
-  printf ("addr of fun 0x%x\n", ptr);
+  ptr = library_getsym(lib, "fun2");
   int a = ptr();
   printf(":) a to %d\n", a);
 
-  int *ccc = library_getsym(lib, "c");
+  int *ccc = library_getsym(lib, "glob");
   printf("c: %d!\n", *ccc);
 
   return 0;

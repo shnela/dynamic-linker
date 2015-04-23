@@ -4,7 +4,7 @@ int fun()
 {
   return d;
 }
-extern glob;
+extern int glob;
 int fun2()
 {
   return glob;
