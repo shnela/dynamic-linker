@@ -24,7 +24,6 @@ static uintptr_t PageSizeRoundUp(uintptr_t addr) {
 }
 
 static int ElfFlagsToMmapFlags(int pflags) {
-//  return (PROT_EXEC | PROT_READ | PROT_WRITE);
   return ((pflags & PF_X) != 0 ? PROT_EXEC : 0) |
     ((pflags & PF_R) != 0 ? PROT_READ : 0) |
     ((pflags & PF_W) != 0 ? PROT_WRITE : 0);
@@ -45,7 +44,7 @@ int is_image_valid(Elf32_Ehdr *hdr)
   return ok;
 }
 
-size_t map_elf(const char* name, void **mapped_load)
+size_t map_elf(const char* name, void **mapped_load, struct protect **protections, int *number_of_protections)
 {
   FILE* elf = fopen(name, "rb");
   if (!elf)
@@ -74,6 +73,7 @@ size_t map_elf(const char* name, void **mapped_load)
   if (bytes_read != phdrs_size) {
     errno = EINVAL;
   }
+
   /* Find the first PT_LOAD segment. */
   size_t phdr_index = 0;
   while (phdr_index < ehdr.e_phnum && phdr[phdr_index].p_type != PT_LOAD)
@@ -95,20 +95,27 @@ size_t map_elf(const char* name, void **mapped_load)
     return -1;
   }
   span = last_load->p_vaddr + last_load->p_memsz;
+
   /* Reserve address space. */
   void *mapping = mmap(NULL, span, PROT_NONE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
   if (mapping == MAP_FAILED) {
     return -1;
   }
   uintptr_t load_bias = (uintptr_t) mapping;
+
   /* Map the PT_LOAD segments. */
   uintptr_t prev_segment_end = 0;
   int entry_point_is_valid = 0;
   Elf32_Phdr *ph;
-  for (ph = first_load; ph <= last_load; ++ph) {
+  *protections = (struct protect*)malloc((last_load - first_load + 1) * sizeof(struct protect));
+  *number_of_protections = 0;
+  struct protect *protection;
+  for (ph = first_load, protection = *protections; ph <= last_load; ph++, protection++) {
     if (ph->p_type != PT_LOAD)
       continue;
-//    int prot = ElfFlagsToMmapFlags(ph->p_flags);
+    /* protection lvl will be set when relocations are complete */
+    protection->prot = ElfFlagsToMmapFlags(ph->p_flags);
+    *number_of_protections++;
     int prot = (PROT_EXEC | PROT_READ | PROT_WRITE);
     uintptr_t segment_start = PageSizeRoundDown(ph->p_vaddr);
     uintptr_t segment_end = PageSizeRoundUp(ph->p_vaddr + ph->p_memsz);
@@ -119,6 +126,8 @@ size_t map_elf(const char* name, void **mapped_load)
     }
     prev_segment_end = segment_end;
     void *segment_addr = (void *) (load_bias + segment_start);
+    protection->addr = segment_addr;
+    protection->size = PageSizeRoundDown(ph->p_offset);
     void *map_result = mmap((void *) segment_addr,
         segment_end - segment_start,
         prot, MAP_PRIVATE | MAP_FIXED, fd,
@@ -219,7 +228,6 @@ int32_t get_offset_of_declared_symbol(const int number_of_symbols, Elf32_Sym *sy
 
 int do_relocation(char *elf_start, Elf32_Rel *rel, int32_t addr)
 {
-  Elf32_Rela *rela = (Elf32_Rela*)rel;
   Elf32_Word rel_type = ELF32_R_TYPE(rel->r_info);
 
   int32_t *rel_point = (int32_t*)(elf_start + rel->r_offset);
@@ -240,10 +248,10 @@ int do_relocation(char *elf_start, Elf32_Rel *rel, int32_t addr)
       *rel_point += (int32_t)elf_start;
       break;
     default:
-      /* TODO */
-      printf("Error\n");
-      return 0;
+      errno = EINVAL;
+      return -1;
   }
+  return 0;
 }
 
 int32_t resolve_relocation(char *elf_start, int number_of_symbols, Elf32_Sym *symbols, char *strtab,
@@ -297,17 +305,17 @@ int do_relocations(char *elf_start, Elf32_Dyn *dyn_start, void *(*getsym)(const 
   const char *sym_name;
   int32_t addr;
   int i;
-  for (i=0; i < number_of_rel_relocs / relent_size; i++) {
-    rel = rel_rel + i;
-    sym_name = strtab + sym[ELF32_R_SYM(rel->r_info)].st_name;
+  for (i=0; i < number_of_rel_relocs / relent_size; i++, rel_rel++) {
+    sym_name = strtab + sym[ELF32_R_SYM(rel_rel->r_info)].st_name;
     addr = resolve_relocation(elf_start, number_of_rel_relocs, sym, strtab, sym_name, getsym);
-    do_relocation(elf_start, rel, addr);
+    if (do_relocation(elf_start, rel_rel, addr) < 0)
+      return -1;
   }
-  for (i=0; i < number_of_jmp_relocs / relent_size; i++) {
-    rel = plt_rel + i;
-    sym_name = strtab + sym[ELF32_R_SYM(rel->r_info)].st_name;
+  for (i=0; i < number_of_jmp_relocs / relent_size; i++, plt_rel++) {
+    sym_name = strtab + sym[ELF32_R_SYM(plt_rel->r_info)].st_name;
     addr = resolve_relocation(elf_start, number_of_rel_relocs, sym, strtab, sym_name, getsym);
-    do_relocation(elf_start, rel, addr);
+    if (do_relocation(elf_start, plt_rel, addr) < 0)
+      return -1;
   }
-  return 42;
+  return (number_of_rel_relocs + number_of_jmp_relocs) / relent_size;
 }

@@ -4,8 +4,15 @@
 
 #include <elf.h>
 
+/* set proper protection lvl to loaded segments */
+struct protect {
+  int prot;
+  void *addr;
+  int size;
+};
+
 /* maps elf LOAD segments file and sets pointer to them, returns mapped bytes or -1*/
-size_t map_elf(const char* name, void **mapped_load);
+size_t map_elf(const char* name, void **mapped_load, struct protect **protections, int *number_of_protections);
 
 /* returns pointer to dynamic segment of mapped elf file */
 void* get_dyn_segment(char *elf);

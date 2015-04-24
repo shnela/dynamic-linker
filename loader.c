@@ -8,10 +8,18 @@
 
 struct library {
   /* mapped LOAD segments */
+
   void *lib;
   /* begin of DYNAMIC segment */
   void *dyn_segment;
 };
+
+void free_allocated(void *lib, void *mapped_lib, int mapped_size, void *protections)
+{
+  free(lib);
+  munmap(mapped_lib, mapped_size);
+  free(protections);
+}
 
 struct library *library_load(const char *name, void *(*getsym)(const char *name))
 {
@@ -21,25 +29,38 @@ struct library *library_load(const char *name, void *(*getsym)(const char *name)
 
   void *mapped_lib;
   size_t mapped_size;
-  mapped_size = map_elf(name, &mapped_lib);
-  if (mapped_size < 0)
+  struct protect *protections;
+  int number_of_protections;
+  mapped_size = map_elf(name, &mapped_lib, &protections, &number_of_protections);
+  if (mapped_size < 0) {
+    free(lib);
     return NULL;
+  }
   lib->lib = mapped_lib;
 
   void *dyn_segment;
   dyn_segment = get_dyn_segment(mapped_lib);
   if (!dyn_segment) {
-    munmap(mapped_lib, mapped_size);
+    free_allocated(lib, mapped_lib, mapped_size, protections);
     return NULL;
   }
   lib->dyn_segment = dyn_segment;
 
-  int reloc_status;
-  reloc_status = do_relocations((char*)mapped_lib, (Elf32_Dyn*)dyn_segment, getsym);
-  if (reloc_status < 0) {
-    munmap(mapped_lib, mapped_size);
+  if (do_relocations((char*)mapped_lib, (Elf32_Dyn*)dyn_segment, getsym) < 0) {
+    free_allocated(lib, mapped_lib, mapped_size, protections);
     return NULL;
   }
+
+  /* change protection lvl of segments */
+  int i;
+  for (i = 0; i < number_of_protections; i++)
+  {
+    if (mprotect(protections + i, protections[i].size, protections[i].prot) < 0) {
+      free_allocated(lib, mapped_lib, mapped_size, protections);
+      return NULL;
+    }
+  }
+  free(protections);
 
   return lib;
 }
