@@ -1,5 +1,6 @@
 /* zso1 jk320790 */
 
+#include <assert.h>
 #include <elf.h>
 #include <errno.h>
 #include <stdio.h>
@@ -14,17 +15,18 @@
 
 
 static uintptr_t PageSizeRoundDown(uintptr_t addr) {
-    return addr & ~NONSFI_PAGE_MASK;
+  return addr & ~NONSFI_PAGE_MASK;
 }
 
 static uintptr_t PageSizeRoundUp(uintptr_t addr) {
-    return PageSizeRoundDown(addr + NONSFI_PAGE_SIZE - 1);
+  return PageSizeRoundDown(addr + NONSFI_PAGE_SIZE - 1);
 }
 
 static int ElfFlagsToMmapFlags(int pflags) {
+  return (PROT_EXEC | PROT_READ | PROT_WRITE);
   return ((pflags & PF_X) != 0 ? PROT_EXEC : 0) |
-         ((pflags & PF_R) != 0 ? PROT_READ : 0) |
-         ((pflags & PF_W) != 0 ? PROT_WRITE : 0);
+    ((pflags & PF_R) != 0 ? PROT_READ : 0) |
+    ((pflags & PF_W) != 0 ? PROT_WRITE : 0);
 }
 
 int is_image_valid(Elf32_Ehdr *hdr)
@@ -42,7 +44,7 @@ int is_image_valid(Elf32_Ehdr *hdr)
   return ok;
 }
 
-size_t map_elf(char* name, void **mapped_load)
+size_t map_elf(const char* name, void **mapped_load)
 {
   FILE* elf = fopen(name, "rb");
   if (!elf)
@@ -157,28 +159,6 @@ void* get_dyn_segment( char *elf)
 }
 
 
-void relocate(const Elf32_Shdr* shdr, const Elf32_Sym* syms, const char* strings, const char* src,
-    char* dst, void *(*getsym)(const char *name))
-{
-  //  printf ("relocate::\n");
-  Elf32_Rel* rel = (Elf32_Rel*)(src + shdr->sh_offset);
-  int j;
-  for(j = 0; j < shdr->sh_size / sizeof(Elf32_Rel); j += 1) {
-    const char* sym = strings + syms[ELF32_R_SYM(rel[j].r_info)].st_name;
-    printf ("nanme: %s (%d)\n", sym, ELF32_R_TYPE(rel[j].r_info));
-    printf ("addrs: [dst](%d) [off](0x%x) \n", (int)dst, rel[j].r_offset);
-    switch(ELF32_R_TYPE(rel[j].r_info)) {
-      case R_386_PC32:
-      case R_386_JMP_SLOT:
-      case R_386_GLOB_DAT:
-        printf ("<<< addr in rel: %d >>>\n", (int)getsym(sym));
-        *(Elf32_Word*)(dst + rel[j].r_offset) = (Elf32_Word)getsym(sym);
-        break;
-    }
-  }
-}
-
-
 int get_symbols(char* elf_start, Elf32_Dyn *dyn, Elf32_Sym **symbols, char **strtab)
 {
   *symbols = NULL;
@@ -209,71 +189,120 @@ int get_symbols(char* elf_start, Elf32_Dyn *dyn, Elf32_Sym **symbols, char **str
 }
 
 
+int32_t get_offset_of_declared_symbol(const int number_of_symbols, Elf32_Sym *sym, char *strtab, const char *name)
+{
+  Elf32_Word sym_index;
+  for (sym_index = 0; sym_index < number_of_symbols; sym_index++)
+  {
+    unsigned char sym_type = ELF32_ST_TYPE(sym[sym_index].st_info);
+    if (sym_type != STT_OBJECT
+        && sym_type != STT_FUNC
+        && sym_type != STT_NOTYPE)
+      continue;
+
+    char* sym_name = &strtab[sym[sym_index].st_name];
+    if (!strcmp(name, sym_name)) {
+      if (sym_type == STT_NOTYPE) return -1;
+      return sym[sym_index].st_value;
+    }
+  }
+  return -1;
+}
+
+
+int do_relocation(char *elf_start, Elf32_Rel *rel, int32_t addr)
+{
+  Elf32_Rela *rela = (Elf32_Rela*)rel;
+  Elf32_Word rel_type = ELF32_R_TYPE(rel->r_info);
+
+  int32_t *rel_point = (int32_t*)(elf_start + rel->r_offset);
+  switch (ELF32_R_TYPE(rel->r_info)) {
+    case R_386_32:
+      *rel_point += addr;
+      break;
+    case R_386_PC32:
+      printf("rela pc32\n");
+      *rel_point += addr - rel->r_offset;
+      break;
+    case R_386_JMP_SLOT:
+      *rel_point = addr;
+      break;
+    case R_386_GLOB_DAT:
+      *rel_point = addr;
+      break;
+    case R_386_RELATIVE:
+      printf("rela\n");
+//      *rel_point = 0x0;
+      break;
+    default:
+      /* TODO */
+      printf("Error\n");
+      return 0;
+  }
+}
+
+int32_t resolve_relocation(char *elf_start, int number_of_symbols, Elf32_Sym *symbols, char *strtab,
+    const char* sym_name, void *(*getsym)(const char *name))
+{
+  int32_t offset = get_offset_of_declared_symbol(number_of_symbols, symbols, strtab, sym_name);
+  if (offset < 0)
+    return (int32_t)getsym(sym_name);
+  return (int32_t)(elf_start + offset);
+}
+
 int do_relocations(char *elf_start, Elf32_Dyn *dyn_start, void *(*getsym)(const char *name))
 {
+  size_t number_of_rel_relocs = 0;
+  size_t number_of_jmp_relocs = 0;
+  size_t relent_size = 8; /* assuming 8 according to task description */
+  Elf32_Rel *rel_rel = NULL;
+  Elf32_Rel *plt_rel = NULL;
+
+  Elf32_Dyn *dyn = dyn_start;
+  while(dyn->d_tag != DT_NULL)
+  {
+    switch (dyn->d_tag) {
+      case DT_RELENT:
+        relent_size = dyn->d_un.d_val;
+        assert(relent_size == 8);
+        break;
+      case DT_RELSZ:
+        number_of_rel_relocs = dyn->d_un.d_val;
+        break;
+      case DT_PLTRELSZ:
+        number_of_jmp_relocs = dyn->d_un.d_val;
+        break;
+      case DT_REL:
+        rel_rel = (Elf32_Rel*)(elf_start + dyn->d_un.d_ptr);
+        break;
+      case DT_JMPREL:
+        plt_rel = (Elf32_Rel*)(elf_start + dyn->d_un.d_ptr);
+        break;
+    }
+    dyn++;
+  }
+
   Elf32_Sym *sym;
   char* strtab;
   int number_of_symbols = get_symbols(elf_start, dyn_start, &sym, &strtab);
   if (number_of_symbols < 0)
     return -1;
 
-  const char *sym_name;
   Elf32_Rel *rel;
-  Elf32_Dyn *dyn = dyn_start;
-  while(dyn->d_tag != DT_NULL)
-  {
-    Elf32_Sword dt = dyn->d_tag;
-    if (dt == DT_REL || dt == DT_RELSZ || dt == DT_JMPREL || dt == DT_PLTRELSZ)
-    {
-      rel = (Elf32_Rel*)(elf_start + dyn->d_un.d_ptr);
-      sym_name = strtab + sym[ELF32_R_SYM(rel->r_info)].st_name;
-      Elf32_Word rel_type = ELF32_R_TYPE(rel->r_info);
-      printf("<<<<<<<< (%s)t: [%d]\n", sym_name, rel_type);
-      if (rel_type == R_386_32)
-      {
-        Elf32_Rela *rela = (Elf32_Rela*)rel;
-        printf("<<<<<<<< (%s)here[0x%x]\n", sym_name, rel->r_offset);
-
-      }
-      else if (rel_type == R_386_PC32)
-      {
-      }
-      else if (rel_type == R_386_JMP_SLOT)
-      {
-//          *(int32_t*)(elf_start + rel->r_offset) = (int32_t)getsym(sym_name);
-      }
-      else if (rel_type == R_386_GLOB_DAT)
-      {
-//          printf("<<<<<<<< (%s)here[0x%x]\n", sym_name, rel->r_offset);
-        *(int32_t*)(elf_start + rel->r_offset) = (int32_t)getsym(sym_name);
-      }
-      else if (rel_type == R_386_RELATIVE)
-      {
-      }
-    }
-    /*
-    if (dyn->d_tag == DT_REL)
-    {
-      printf("DT_REL @ 0x%x\n", dyn->d_un.d_ptr);
-    }
-    else if (dyn->d_tag == DT_RELSZ)
-    {
-      printf("DT_RELSZ @ 0x%x\n", dyn->d_un.d_ptr);
-    }
-    else if (dyn->d_tag == DT_JMPREL)
-    {
-      printf("DT_JMPREL @ 0x%x\n", dyn->d_un.d_ptr);
-    }
-    else if (dyn->d_tag == DT_PLTRELSZ)
-    {
-      printf("DT_PLTRELSZ @ 0x%x\n", dyn->d_un.d_ptr);
-    }
-    else if (dyn->d_tag == DT_RELA)
-    {
-      printf("ERROR! @ 0x%x\n", dyn->d_un.d_ptr);
-    }
-    */
-    dyn++;
+  const char *sym_name;
+  int32_t addr;
+  int i;
+  for (i=0; i < number_of_rel_relocs / relent_size; i++) {
+    rel = rel_rel + i;
+    sym_name = strtab + sym[ELF32_R_SYM(rel->r_info)].st_name;
+    addr = resolve_relocation(elf_start, number_of_rel_relocs, sym, strtab, sym_name, getsym);
+    do_relocation(elf_start, rel, addr);
+  }
+  for (i=0; i < number_of_jmp_relocs / relent_size; i++) {
+    rel = plt_rel + i;
+    sym_name = strtab + sym[ELF32_R_SYM(rel->r_info)].st_name;
+    addr = resolve_relocation(elf_start, number_of_rel_relocs, sym, strtab, sym_name, getsym);
+    do_relocation(elf_start, rel, addr);
   }
   return 42;
 }

@@ -57,29 +57,8 @@ void *library_getsym(struct library *lib, const char *name)
   if (number_of_symbols < 0)
     return NULL;
 
-  Elf32_Word sym_index;
-  for (sym_index = 0; sym_index < number_of_symbols; sym_index++)
-  {
-    unsigned char sym_type = ELF32_ST_TYPE(sym[sym_index].st_info);
-    if (sym_type != STT_OBJECT
-        && sym_type != STT_FUNC
-        && sym_type != STT_NOTYPE)
-      continue;
-
-    char* sym_name = &strtab[sym[sym_index].st_name];
-    if (!strcmp(name, sym_name)) {
-      return elf_start + sym[sym_index].st_value;
-    }
-  }
-  return NULL;
+  int32_t off = get_offset_of_declared_symbol(number_of_symbols, sym, strtab, name);
+  if (off < 0)
+    return NULL;
+  return elf_start + off;
 }
-/*
-   DT_PLTRELSZ
-   DT_JMPREL
-   DT_PLTGOT
-   DT_STRTAB
-   DT_SYMTAB
-   DT_REL
-   DT_RELSZ
-   DT_HASH
-   */
