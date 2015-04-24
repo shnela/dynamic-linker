@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <sys/mman.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "elf_reader.h"
 
@@ -23,7 +24,7 @@ static uintptr_t PageSizeRoundUp(uintptr_t addr) {
 }
 
 static int ElfFlagsToMmapFlags(int pflags) {
-  return (PROT_EXEC | PROT_READ | PROT_WRITE);
+//  return (PROT_EXEC | PROT_READ | PROT_WRITE);
   return ((pflags & PF_X) != 0 ? PROT_EXEC : 0) |
     ((pflags & PF_R) != 0 ? PROT_READ : 0) |
     ((pflags & PF_W) != 0 ? PROT_WRITE : 0);
@@ -107,7 +108,8 @@ size_t map_elf(const char* name, void **mapped_load)
   for (ph = first_load; ph <= last_load; ++ph) {
     if (ph->p_type != PT_LOAD)
       continue;
-    int prot = ElfFlagsToMmapFlags(ph->p_flags);
+//    int prot = ElfFlagsToMmapFlags(ph->p_flags);
+    int prot = (PROT_EXEC | PROT_READ | PROT_WRITE);
     uintptr_t segment_start = PageSizeRoundDown(ph->p_vaddr);
     uintptr_t segment_end = PageSizeRoundUp(ph->p_vaddr + ph->p_memsz);
     if (segment_start < prev_segment_end) {
@@ -132,6 +134,11 @@ size_t map_elf(const char* name, void **mapped_load)
       entry_point_is_valid = 1;
     }
   }
+
+  uintptr_t bss_start = ph->p_vaddr + ph->p_filesz;
+  uintptr_t bss_map_start = PageSizeRoundUp(bss_start);
+  memset((void *) (load_bias + bss_start), 0, bss_map_start - bss_start);
+
   if (close(fd) != 0) {
     errno = EIO;
     munmap(mapping, span);
@@ -221,8 +228,7 @@ int do_relocation(char *elf_start, Elf32_Rel *rel, int32_t addr)
       *rel_point += addr;
       break;
     case R_386_PC32:
-      printf("rela pc32\n");
-      *rel_point += addr - rel->r_offset;
+      *rel_point = *rel_point + addr - (int32_t)rel_point;
       break;
     case R_386_JMP_SLOT:
       *rel_point = addr;
@@ -231,8 +237,7 @@ int do_relocation(char *elf_start, Elf32_Rel *rel, int32_t addr)
       *rel_point = addr;
       break;
     case R_386_RELATIVE:
-      printf("rela\n");
-//      *rel_point = 0x0;
+      *rel_point += (int32_t)elf_start;
       break;
     default:
       /* TODO */
