@@ -1,3 +1,9 @@
-http://stackoverflow.com/questions/15779185/list-all-the-functions-symbols-one-can-use-on-run-time-in-c
-http://stackoverflow.com/questions/13908276/loading-elf-file-in-c-in-user-space
-https://chromium.googlesource.com/native_client/src/native_client/+/master/src/nonsfi/loader/elf_loader.c
+Niestety leniwa wersja jeszcze nie działa, na wszelki wypadek przesyłam gorliwe rozwiązanie.
+
+Działanie linkera:
+- na początku mapowane są segmenty LOAD, zrealizowałem to tak jak w źródłach chromium.
+  https://chromium.googlesource.com/native_client/src/native_client/+/master/src/nonsfi/loader/elf_loader.c
+- następnie przeprowadzane są zwykłe relokacje i relokacje plt.
+- przed przekazaniem biblioteki użytkownikowi zamapowanym segmentom nadawane są odpowiednie uprawnienia
+- w celu udostępnienia symbolu funkcja library_getsym przegląda symbole z sekcji DT_SYMTAB
+
