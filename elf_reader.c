@@ -267,8 +267,9 @@ void* do_lazy_relocation(struct elf_ptrs *elf_ptrs, int offset)
 {
   const char *sym_name;
   int32_t addr;
-  sym_name = elf_ptrs->strtab +
-    elf_ptrs->symbols[ELF32_R_SYM(elf_ptrs->plt_relocations[offset/8].r_info)].st_name;
+  Elf32_Rel *relocation = (Elf32_Rel*)((void*)(elf_ptrs->plt_relocations) + offset);
+  int sym_index = ELF32_R_SYM(relocation->r_info);
+  sym_name = elf_ptrs->strtab + elf_ptrs->symbols[sym_index].st_name;
   addr = resolve_relocation(elf_ptrs->elf_start, 1, elf_ptrs->symbols,
       elf_ptrs->strtab, sym_name, elf_ptrs->getsym);
   *(int32_t*)(elf_ptrs->elf_start + elf_ptrs->plt_relocations[offset].r_offset) = (int32_t)(addr);
@@ -277,12 +278,37 @@ void* do_lazy_relocation(struct elf_ptrs *elf_ptrs, int offset)
 
 void start_lazy_relocation();
 asm("start_lazy_relocation:"
-    " pop %ecx;"
-    " movl (%ecx), %eax;"
-    " push %ecx;"
-    " call *%eax;"
-    " add $8, %esp;"
+    /* save registers on stack */
     " push %eax;"
+    " push %ebx;"
+    " push %ecx;"
+    " push %edx;"
+
+    /* allocate place for 2 coppied arguments and registers */
+    " sub $8, %esp;"
+    /* copy arguments to top of the stack */
+    " movl 28(%esp), %eax;"
+    " movl %eax, 4(%esp);"
+    " movl 24(%esp), %eax;"
+    " movl %eax, (%esp);"
+    /* first argument is pointer to the structure,
+       where first entry is address to do_lazy_relocation */
+    " movl (%eax), %eax;"
+    " call *%eax;"
+
+    /* pop copied arguments from the stack */
+    " add $8, %esp;"
+    /* move resolved address to 2. of the old arguments */
+    " movl %eax, 20(%esp);"
+
+    /* restore registers */
+    " pop %edx;"
+    " pop %ecx;"
+    " pop %ebx;"
+    " pop %eax;"
+
+    /* pop first old argument from the stack */
+    " add $4, %esp;"
     " ret;");
 
 int do_relocations(char *elf_start, Elf32_Dyn *dyn_start, void *(*getsym)(const char *name))

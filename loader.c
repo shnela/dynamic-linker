@@ -8,7 +8,6 @@
 
 struct library {
   /* mapped LOAD segments */
-
   void *lib;
   /* begin of DYNAMIC segment */
   void *dyn_segment;
