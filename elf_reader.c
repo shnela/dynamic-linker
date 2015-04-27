@@ -280,17 +280,14 @@ void* do_lazy_relocation(struct elf_ptrs *elf_ptrs, int offset)
 void start_lazy_relocation();
 asm("start_lazy_relocation:"
     /* save registers on stack */
-    " push %eax;"
-    " push %ebx;"
-    " push %ecx;"
-    " push %edx;"
+    " pusha;"
 
     /* allocate place for 2 coppied arguments and registers */
     " sub $8, %esp;"
     /* copy arguments to top of the stack */
-    " movl 28(%esp), %eax;"
+    " movl 44(%esp), %eax;"
     " movl %eax, 4(%esp);"
-    " movl 24(%esp), %eax;"
+    " movl 40(%esp), %eax;"
     " movl %eax, (%esp);"
     /* first argument is pointer to the structure,
        where first entry is address to do_lazy_relocation */
@@ -300,13 +297,10 @@ asm("start_lazy_relocation:"
     /* pop copied arguments from the stack */
     " add $8, %esp;"
     /* move resolved address to 2. of the old arguments */
-    " movl %eax, 20(%esp);"
+    " movl %eax, 36(%esp);"
 
     /* restore registers */
-    " pop %edx;"
-    " pop %ecx;"
-    " pop %ebx;"
-    " pop %eax;"
+    " popa;"
 
     /* pop first old argument from the stack */
     " add $4, %esp;"

@@ -8,7 +8,7 @@ Działanie loadera:
   - wpisy PLT0+4 PLT0+8 nadpisane zostały odpowiednio adresem do struktury, zawierającej wskaźniki na wszystkie istotne z punktu widzenia rozwiązywania symboli miejsca w zmapowanym pliku ELF oraz adresem funkcji `start_lazy_relocation`, działającej w następujący sposób:
     - na górze stosu mamy wartości z PLT0+4, PLT0+8 i adres powrotu.
     - dorzucamy tam backup istotnych rejestrów
-    - kopiujemy argumenty z PLT na górę stosu tak, aby funkcja do_lazy_relocation miała do nich dostęp (odpowiednik instrukcji pusha z x86)
+    - kopiujemy argumenty z PLT na górę stosu tak, aby funkcja do_lazy_relocation miała do nich dostęp
     - wywołujemy funkcję - jej adres przechowywany jest jako pierwszy element w strukturze z PLT0+4
     - do_lazy_relocation podmienia odpowiedni wpis w GOT.PLT na adres funkcji wskazywanej przez poszukiwany symbol
     - po powrocie zrzucamy ze stosu 2 górne argumenty
