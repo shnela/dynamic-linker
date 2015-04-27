@@ -4,6 +4,16 @@
 
 #include <elf.h>
 
+struct elf_ptrs {
+  void (*r)();
+  void *elf_start;
+  Elf32_Dyn *dyn_section;
+  Elf32_Rel *plt_relocations;
+  Elf32_Sym *symbols;
+  char *strtab;
+  void *(*getsym)();
+};
+
 /* set proper protection lvl to loaded segments */
 struct protect {
   int prot;

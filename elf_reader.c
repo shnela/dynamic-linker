@@ -239,9 +239,7 @@ int do_relocation(char *elf_start, Elf32_Rel *rel, int32_t addr)
       *rel_point = *rel_point + addr - (int32_t)rel_point;
       break;
     case R_386_JMP_SLOT:
-//      printf("relocation offset: 0x%x(0x%x)\n", rel->r_offset, (int)rel_point);
-      *rel_point = addr;
-//      *rel_point += (int32_t)elf_start;
+      *rel_point += (int32_t)elf_start;
       break;
     case R_386_GLOB_DAT:
       *rel_point = addr;
@@ -265,21 +263,27 @@ int32_t resolve_relocation(char *elf_start, int number_of_symbols, Elf32_Sym *sy
   return (int32_t)(elf_start + offset);
 }
 
-void do_lazy_relocation()
+void* do_lazy_relocation(struct elf_ptrs *elf_ptrs, int offset)
 {
-  printf("<<< ff >>>\n");
-  register int eax __asm__("eax");
-  register int ebx __asm__("ebx");
-  printf("regi: 0x%x 0x%x\n", eax, ebx);
-  int i;
-  for (i=0; i < 30; i++) {
-    asm("pop %eax;");
-    printf("%d) stack: 0x%x\n", i, eax);
-  }
-  asm("call *0x1f0(%ebx);");
-  printf (">>>>\n");
+  const char *sym_name;
+  int32_t addr;
+  sym_name = elf_ptrs->strtab +
+    elf_ptrs->symbols[ELF32_R_SYM(elf_ptrs->plt_relocations[offset/8].r_info)].st_name;
+  addr = resolve_relocation(elf_ptrs->elf_start, 1, elf_ptrs->symbols,
+      elf_ptrs->strtab, sym_name, elf_ptrs->getsym);
+  *(int32_t*)(elf_ptrs->elf_start + elf_ptrs->plt_relocations[offset].r_offset) = (int32_t)(addr);
+  return (void*)addr;
 }
 
+void start_lazy_relocation();
+asm("start_lazy_relocation:"
+    " pop %ecx;"
+    " movl (%ecx), %eax;"
+    " push %ecx;"
+    " call *%eax;"
+    " add $8, %esp;"
+    " push %eax;"
+    " ret;");
 
 int do_relocations(char *elf_start, Elf32_Dyn *dyn_start, void *(*getsym)(const char *name))
 {
@@ -288,6 +292,8 @@ int do_relocations(char *elf_start, Elf32_Dyn *dyn_start, void *(*getsym)(const 
   size_t relent_size = 8; /* assuming 8 according to task description */
   Elf32_Rel *rel_rel = NULL;
   Elf32_Rel *plt_rel = NULL;
+
+struct elf_ptrs* elf_ptrs = malloc(sizeof(struct elf_ptrs));
 
   Elf32_Dyn *dyn = dyn_start;
   while(dyn->d_tag != DT_NULL)
@@ -310,20 +316,27 @@ int do_relocations(char *elf_start, Elf32_Dyn *dyn_start, void *(*getsym)(const 
         plt_rel = (Elf32_Rel*)(elf_start + dyn->d_un.d_ptr);
         break;
       case DT_PLTGOT:
-        *(int32_t*)(elf_start + dyn->d_un.d_ptr + 4) = 112;
-        *(int32_t*)(elf_start + dyn->d_un.d_ptr + 8) = (int)do_lazy_relocation;
-//        printf("elf start: 0x%x\n", (int)elf_start);
-//        printf("dyns: 0x%x\n", (int)(elf_start + dyn->d_un.d_ptr));
+        *(int32_t*)(elf_start + dyn->d_un.d_ptr + 4) = (int32_t)elf_ptrs;
+        elf_ptrs->r = (void (*)())do_lazy_relocation;
+        *(int32_t*)(elf_start + dyn->d_un.d_ptr + 8) =
+          (int32_t)start_lazy_relocation;
         break;
     }
     dyn++;
   }
+  elf_ptrs->elf_start = elf_start;
+  elf_ptrs->dyn_section = dyn_start;
+  elf_ptrs->plt_relocations = plt_rel;
 
   Elf32_Sym *sym;
   char* strtab;
   int number_of_symbols = get_symbols(elf_start, dyn_start, &sym, &strtab);
   if (number_of_symbols < 0)
     return -1;
+
+  elf_ptrs->symbols = sym;
+  elf_ptrs->strtab = strtab;
+  elf_ptrs->getsym = getsym;
 
   Elf32_Rel *rel;
   const char *sym_name;
@@ -338,9 +351,7 @@ int do_relocations(char *elf_start, Elf32_Dyn *dyn_start, void *(*getsym)(const 
 
   /* for dynamic binding I have to relocate GOT.PLT entities */
   for (i=0; i < number_of_jmp_relocs / relent_size; i++, plt_rel++) {
-    sym_name = strtab + sym[ELF32_R_SYM(plt_rel->r_info)].st_name;
-    addr = resolve_relocation(elf_start, number_of_jmp_relocs, sym, strtab, sym_name, getsym);
-    if (do_relocation(elf_start, plt_rel, addr) < 0)
+    if (do_relocation(elf_start, plt_rel, 0) < 0)
       return -1;
   }
   return (number_of_rel_relocs + number_of_jmp_relocs) / relent_size;
