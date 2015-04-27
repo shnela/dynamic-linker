@@ -1,9 +1,20 @@
-Niestety leniwa wersja jeszcze nie działa, na wszelki wypadek przesyłam gorliwe rozwiązanie.
-
-Działanie linkera:
+Działanie loadera:
 - na początku mapowane są segmenty LOAD, zrealizowałem to tak jak w źródłach chromium.
   https://chromium.googlesource.com/native_client/src/native_client/+/master/src/nonsfi/loader/elf_loader.c
-- następnie przeprowadzane są zwykłe relokacje i relokacje plt.
-- przed przekazaniem biblioteki użytkownikowi zamapowanym segmentom nadawane są odpowiednie uprawnienia
+- następnie przeprowadzane są zwykłe relokacje, w przypadku relokacji plt - relokowane są tylko adresy do GOT.PLT - rozwiązywanie nazw i uzupełnianie GOT.PLT odbywa się leniwie.
+- przed przekazaniem biblioteki użytkownikowi zamapowanym segmentom nadawane są odpowiednie uprawnienia - nie można było zrobić tego od razu ze względu na relokacje R_386_RELATIVE, których adresy przypadały na sekcję LOAD bez prawa do zapisu.
 - w celu udostępnienia symbolu funkcja library_getsym przegląda symbole z sekcji DT_SYMTAB
+- wiązanie R_386_JMP_SLOT:
+  - wpisy PLT0+4 PLT0+8 nadpisane zostały odpowiednio adresem do struktury, zawierającej wskaźniki na wszystkie istotne z punktu widzenia rozwiązywania symboli miejsca w zmapowanym pliku ELF oraz adresem funkcji `start_lazy_relocation`, działającej w następujący sposób:
+    - na górze stosu mamy wartości z PLT0+4, PLT0+8 i adres powrotu.
+    - dorzucamy tam backup istotnych rejestrów
+    - kopiujemy argumenty z PLT na górę stosu tak, aby funkcja do_lazy_relocation miała do nich dostęp (odpowiednik instrukcji pusha z x86)
+    - wywołujemy funkcję - jej adres przechowywany jest jako pierwszy element w strukturze z PLT0+4
+    - do_lazy_relocation podmienia odpowiedni wpis w GOT.PLT na adres funkcji wskazywanej przez poszukiwany symbol
+    - po powrocie zrzucamy ze stosu 2 górne argumenty
+    - nadpisujemy w głębi stosu element z PLT0+8 zawartością rejestru eax - adres poszukiwanej funkcji zwrócony przez do_lazy_relocation
+    - przywracamy ze stosu wartości rejestrów sprzed wywoałania do_lazy_relocation
+    - wywalamy jeszcze jeden element ze stosu (PLT0+4)
+    - teraz na stosie znajduje się adres funkcji, która właśnie została podlinkowana, a następnie adres, gdzie pierwszy raz próbowano wywołać tę funkcję - wracamy
+
 

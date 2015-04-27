@@ -4,6 +4,7 @@
 
 #include <elf.h>
 
+/* structure for lazy binding object */
 struct elf_ptrs {
   void (*r)();
   void *elf_start;

@@ -239,6 +239,7 @@ int do_relocation(char *elf_start, Elf32_Rel *rel, int32_t addr)
       *rel_point = *rel_point + addr - (int32_t)rel_point;
       break;
     case R_386_JMP_SLOT:
+      /* only relative relocation - name resolving is lazy */
       *rel_point += (int32_t)elf_start;
       break;
     case R_386_GLOB_DAT:
