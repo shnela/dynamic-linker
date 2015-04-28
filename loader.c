@@ -54,7 +54,7 @@ struct library *library_load(const char *name, void *(*getsym)(const char *name)
   int i;
   for (i = 0; i < number_of_protections; i++)
   {
-    if (mprotect(protections + i, protections[i].size, protections[i].prot) < 0) {
+    if (mprotect(protections[i].addr, protections[i].size, protections[i].prot) < 0) {
       free_allocated(lib, mapped_lib, mapped_size, protections);
       return NULL;
     }

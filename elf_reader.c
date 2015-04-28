@@ -15,15 +15,15 @@
 #define NONSFI_PAGE_MASK (NONSFI_PAGE_SIZE - 1)
 
 
-static uintptr_t PageSizeRoundDown(uintptr_t addr) {
+static uintptr_t page_size_round_down(uintptr_t addr) {
   return addr & ~NONSFI_PAGE_MASK;
 }
 
-static uintptr_t PageSizeRoundUp(uintptr_t addr) {
-  return PageSizeRoundDown(addr + NONSFI_PAGE_SIZE - 1);
+static uintptr_t page_size_round_up(uintptr_t addr) {
+  return page_size_round_down(addr + NONSFI_PAGE_SIZE - 1);
 }
 
-static int ElfFlagsToMmapFlags(int pflags) {
+static int elf_flags2mmap_flags(int pflags) {
   return ((pflags & PF_X) != 0 ? PROT_EXEC : 0) |
     ((pflags & PF_R) != 0 ? PROT_READ : 0) |
     ((pflags & PF_W) != 0 ? PROT_WRITE : 0);
@@ -106,19 +106,20 @@ size_t map_elf(const char* name, void **mapped_load, struct protect **protection
   /* Map the PT_LOAD segments. */
   uintptr_t prev_segment_end = 0;
   int entry_point_is_valid = 0;
-  Elf32_Phdr *ph;
+
   *protections = (struct protect*)malloc((last_load - first_load + 1) * sizeof(struct protect));
   *number_of_protections = 0;
   struct protect *protection;
+
+  Elf32_Phdr *ph;
   for (ph = first_load, protection = *protections; ph <= last_load; ph++, protection++) {
     if (ph->p_type != PT_LOAD)
       continue;
     /* protection lvl will be set when relocations are complete */
-    protection->prot = ElfFlagsToMmapFlags(ph->p_flags);
-    *number_of_protections++;
-    int prot = (PROT_EXEC | PROT_READ | PROT_WRITE);
-    uintptr_t segment_start = PageSizeRoundDown(ph->p_vaddr);
-    uintptr_t segment_end = PageSizeRoundUp(ph->p_vaddr + ph->p_memsz);
+    protection->prot = elf_flags2mmap_flags(ph->p_flags);
+    (*number_of_protections)++;
+    uintptr_t segment_start = page_size_round_down(ph->p_vaddr);
+    uintptr_t segment_end = page_size_round_up(ph->p_vaddr + ph->p_memsz);
     if (segment_start < prev_segment_end) {
       errno = EINVAL;
       munmap(mapping, span);
@@ -127,11 +128,12 @@ size_t map_elf(const char* name, void **mapped_load, struct protect **protection
     prev_segment_end = segment_end;
     void *segment_addr = (void *) (load_bias + segment_start);
     protection->addr = segment_addr;
-    protection->size = PageSizeRoundDown(ph->p_offset);
+    protection->size = segment_end - segment_start;
+    /* protection lvl of this segments will be changed after relocations are done */
     void *map_result = mmap((void *) segment_addr,
         segment_end - segment_start,
-        prot, MAP_PRIVATE | MAP_FIXED, fd,
-        PageSizeRoundDown(ph->p_offset));
+        (PROT_READ | PROT_WRITE), MAP_PRIVATE | MAP_FIXED, fd,
+        page_size_round_down(ph->p_offset));
     if (map_result != segment_addr) {
       errno = EINVAL;
       munmap(mapping, span);
@@ -142,11 +144,29 @@ size_t map_elf(const char* name, void **mapped_load, struct protect **protection
         ehdr.e_entry < ph->p_vaddr + ph->p_filesz) {
       entry_point_is_valid = 1;
     }
-  }
 
-  uintptr_t bss_start = ph->p_vaddr + ph->p_filesz;
-  uintptr_t bss_map_start = PageSizeRoundUp(bss_start);
-  memset((void *) (load_bias + bss_start), 0, bss_map_start - bss_start);
+    if (ph->p_memsz > ph->p_filesz) {
+      if ((ph->p_flags & PF_W) == 0) {
+        errno = EINVAL;
+        munmap(mapping, span);
+        return -1;
+      }
+      uintptr_t bss_start = ph->p_vaddr + ph->p_filesz;
+      uintptr_t bss_map_start = page_size_round_up(bss_start);
+      memset((void *) (load_bias + bss_start), 0, bss_map_start - bss_start);
+      if (bss_map_start < segment_end) {
+        void *map_addr = (void *) (load_bias + bss_map_start);
+        map_result = mmap(map_addr, segment_end - bss_map_start,
+            elf_flags2mmap_flags(ph->p_flags), MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED,
+            -1, 0);
+        if (map_result != map_addr) {
+          errno = EINVAL;
+          munmap(mapping, span);
+          return -1;
+        }
+      }
+    }
+  }
 
   if (close(fd) != 0) {
     errno = EIO;
@@ -278,7 +298,8 @@ void* do_lazy_relocation(struct elf_ptrs *elf_ptrs, int offset)
 }
 
 void start_lazy_relocation();
-asm("start_lazy_relocation:"
+asm(".local start_lazy_relocation;"
+    "start_lazy_relocation:"
     /* save registers on stack */
     " pusha;"
 
@@ -314,7 +335,7 @@ int do_relocations(char *elf_start, Elf32_Dyn *dyn_start, void *(*getsym)(const 
   Elf32_Rel *rel_rel = NULL;
   Elf32_Rel *plt_rel = NULL;
 
-struct elf_ptrs* elf_ptrs = malloc(sizeof(struct elf_ptrs));
+  struct elf_ptrs* elf_ptrs = malloc(sizeof(struct elf_ptrs));
 
   Elf32_Dyn *dyn = dyn_start;
   while(dyn->d_tag != DT_NULL)
